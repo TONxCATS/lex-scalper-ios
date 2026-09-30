@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "LEX QNT Scalper"
+description = "A mobile-first, read-only scalping terminal for monitoring live QNT/USDT order-book depth, liquidity imbalance, spread, and market price from public exchange data."
+version = "1.0.0"
+id = "artifacts/lex-qnt-scalper"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24188
+
+[services.development]
+run = "pnpm --filter @workspace/lex-qnt-scalper run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lex-qnt-scalper", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/lex-qnt-scalper/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24188"
+BASE_PATH = "/"

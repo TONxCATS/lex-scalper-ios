@@ -1,6 +1,6 @@
-# [Project name]
+# LEX QNT Scalper
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A mobile-first, read-only terminal for monitoring public QNT/USDT spot market depth, spread, imbalance, and price.
 
 ## Run & Operate
 
@@ -22,19 +22,25 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/lex-qnt-scalper/src/App.tsx` — order-book terminal UI
+- `artifacts/lex-qnt-scalper/src/hooks/use-market-stream.ts` — public Gate.io spot feed and live book state
+- `artifacts/lex-qnt-scalper/src/index.css` — terminal theme and responsive layout
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Market data comes from Gate.io public spot WebSocket/REST endpoints; no authenticated account, API key, or app backend is used.
+- Use Gate.io because Binance and Bybit market-data endpoints were geo-restricted in this environment, while OKX did not list QNT/USDT spot.
+- The book uses public top-20 snapshots and derives cumulative size, spread, imbalance, and relative liquidity flags in the browser.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Monitors QNT/USDT top-20 bids and asks, last price, spread, 24-hour ticker context, depth imbalance, and unusually large visible orders.
+- Provides connection freshness, reconnect, pause, and resume controls. It does not place trades or manage assets.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Keep this iPhone-first, dark, professional, and focused on QNT/USDT public market data only.
+- Do not add API-key, wallet, deposit, or real-trading flows.
 
 ## Gotchas
 
