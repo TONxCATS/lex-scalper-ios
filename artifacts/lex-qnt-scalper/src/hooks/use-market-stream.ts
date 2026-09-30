@@ -34,6 +34,8 @@ const EMPTY_TICKER: TickerState = {
 const STREAM_URL = 'wss://api.gateio.ws/ws/v4/';
 const SNAPSHOT_URL =
   'https://api.gateio.ws/api/v4/spot/order_book?currency_pair=QNT_USDT&limit=20&with_id=true';
+const TICKER_SNAPSHOT_URL =
+  'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=QNT_USDT';
 
 function asNumber(value: unknown): number | null {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -59,7 +61,10 @@ function levelsFrom(payload: unknown, descending: boolean): BookLevel[] {
   });
 }
 
-export function useMarketStream(enabled: boolean) {
+export function useMarketStream(
+  enabled: boolean,
+  beforeBookUpdate?: () => void,
+) {
   const [book, setBook] = useState<BookState>(EMPTY_BOOK);
   const [ticker, setTicker] = useState<TickerState>(EMPTY_TICKER);
   const [connection, setConnection] = useState<ConnectionState>('connecting');
@@ -85,6 +90,7 @@ export function useMarketStream(enabled: boolean) {
     let activeSocket: WebSocket | null = null;
     let retryTimer: number | null = null;
     let streamBookReceived = false;
+    let streamTickerReceived = false;
     const snapshotAbort = new AbortController();
 
     fetch(SNAPSHOT_URL, { signal: snapshotAbort.signal })
@@ -97,6 +103,7 @@ export function useMarketStream(enabled: boolean) {
         const bids = levelsFrom(snapshot.bids, true);
         const asks = levelsFrom(snapshot.asks, false);
         if (bids.length || asks.length) {
+          beforeBookUpdate?.();
           setBook({
             bids,
             asks,
@@ -109,6 +116,30 @@ export function useMarketStream(enabled: boolean) {
       })
       .catch(() => {
         // Keep waiting for WebSocket snapshots if the public REST endpoint is unavailable.
+      });
+
+    fetch(TICKER_SNAPSHOT_URL, { signal: snapshotAbort.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Ticker request failed (${response.status})`);
+        return response.json() as Promise<unknown>;
+      })
+      .then((payload) => {
+        if (disposed || streamTickerReceived || !Array.isArray(payload)) return;
+        const tickerRow = (payload as Record<string, unknown>[]).find(
+          (row) => row.currency_pair === 'QNT_USDT',
+        );
+        const lastPrice = asNumber(tickerRow?.last);
+        if (lastPrice === null) return;
+        setTicker({
+          lastPrice,
+          priceChangePercent: asNumber(tickerRow?.change_percentage),
+          highPrice: asNumber(tickerRow?.high_24h),
+          lowPrice: asNumber(tickerRow?.low_24h),
+          quoteVolume: asNumber(tickerRow?.quote_volume),
+        });
+      })
+      .catch(() => {
+        // The public WebSocket ticker stream remains the live source of truth.
       });
 
     const connect = () => {
@@ -165,6 +196,7 @@ export function useMarketStream(enabled: boolean) {
             const asks = levelsFrom(envelope.result.asks, false);
             if (bids.length || asks.length) {
               streamBookReceived = true;
+              beforeBookUpdate?.();
               setBook({
                 bids,
                 asks,
@@ -184,6 +216,7 @@ export function useMarketStream(enabled: boolean) {
                 : undefined;
             const lastPrice = asNumber(tickerRow?.last);
             if (lastPrice !== null) {
+              streamTickerReceived = true;
               setTicker({
                 lastPrice,
                 priceChangePercent: asNumber(tickerRow?.change_percentage),
@@ -266,7 +299,7 @@ export function useMarketStream(enabled: boolean) {
       activeSocket?.close();
       activeSocket = null;
     };
-  }, [enabled, connectionNonce]);
+  }, [beforeBookUpdate, enabled, connectionNonce]);
 
   return { book, ticker, connection, lastUpdateAt, retryAttempt, reconnectNow };
 }

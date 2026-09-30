@@ -1,4 +1,15 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  memo,
+  type CSSProperties,
+  type ReactNode,
+  type UIEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Activity, Pause, Play, RotateCw } from 'lucide-react';
 import { Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -51,6 +62,52 @@ function connectionCopy(state: ConnectionState) {
   return 'DISCONNECTED';
 }
 
+type PriceDirection = 'up' | 'down' | null;
+
+type PriceLevelRowProps = {
+  side: 'bid' | 'ask';
+  level: BookLevel;
+  index: number;
+  maxSize: number;
+  threshold: number;
+};
+
+const PriceLevelRow = memo(
+  function PriceLevelRow({ side, level, index, maxSize, threshold }: PriceLevelRowProps) {
+    const isLarge = level.size >= threshold;
+    const depthWidth = maxSize > 0 ? Math.max(3, (level.size / maxSize) * 100) : 0;
+    return (
+      <div
+        className={`level-row${isLarge ? ' large-order' : ''}`}
+        style={{ '--depth-width': `${depthWidth}%` } as CSSProperties}
+        data-testid={`row-${side}-${index}`}
+        data-price={level.price}
+        aria-label={`${side === 'bid' ? 'Bid' : 'Ask'} ${formatPrice(level.price)} QNT size ${formatSize(level.size)}${isLarge ? ', unusually large liquidity' : ''}`}
+        title={isLarge ? 'Unusually large visible liquidity' : undefined}
+      >
+        <span className="price" data-testid={`price-${side}-${index}`}>
+          {formatPrice(level.price)}
+        </span>
+        <span className="size" data-testid={`size-${side}-${index}`}>
+          {formatSize(level.size)}
+          {isLarge && <span className="large-tag">LARGE</span>}
+        </span>
+        <span className="cumulative" data-testid={`cumulative-${side}-${index}`}>
+          {formatSize(level.cumulativeSize, 3)}
+        </span>
+      </div>
+    );
+  },
+  (previous, next) =>
+    previous.side === next.side &&
+    previous.index === next.index &&
+    previous.level.price === next.level.price &&
+    previous.level.size === next.level.size &&
+    previous.level.cumulativeSize === next.level.cumulativeSize &&
+    previous.maxSize === next.maxSize &&
+    previous.threshold === next.threshold,
+);
+
 function LevelRows({
   side,
   levels,
@@ -74,34 +131,16 @@ function LevelRows({
   }
 
   return (
-    <>
-      {levels.map((level, index) => {
-        const isLarge = level.size >= threshold;
-        const depthWidth = maxSize > 0 ? Math.max(3, (level.size / maxSize) * 100) : 0;
-        return (
-          <div
-            className={`level-row${isLarge ? ' large-order' : ''}`}
-            key={`${side}-${level.price}`}
-            style={{ '--depth-width': `${depthWidth}%` } as CSSProperties}
-            data-testid={`row-${side}-${index}`}
-            data-price={level.price}
-            aria-label={`${side === 'bid' ? 'Bid' : 'Ask'} ${formatPrice(level.price)} QNT size ${formatSize(level.size)}${isLarge ? ', unusually large liquidity' : ''}`}
-            title={isLarge ? 'Unusually large visible liquidity' : undefined}
-          >
-            <span className="price" data-testid={`price-${side}-${index}`}>
-              {formatPrice(level.price)}
-            </span>
-            <span className="size" data-testid={`size-${side}-${index}`}>
-              {formatSize(level.size)}
-              {isLarge && <span className="large-tag">LARGE</span>}
-            </span>
-            <span className="cumulative" data-testid={`cumulative-${side}-${index}`}>
-              {formatSize(level.cumulativeSize, 3)}
-            </span>
-          </div>
-        );
-      })}
-    </>
+    levels.map((level, index) => (
+      <PriceLevelRow
+        key={`${side}-${level.price}`}
+        side={side}
+        level={level}
+        index={index}
+        maxSize={maxSize}
+        threshold={threshold}
+      />
+    ))
   );
 }
 
@@ -141,14 +180,95 @@ function BookSide({
 function Home() {
   const [feedEnabled, setFeedEnabled] = useState(true);
   const [visibleRowCount, setVisibleRowCount] = useState<10 | 20>(20);
+  const [followPrice, setFollowPrice] = useState(false);
+  const [priceDirection, setPriceDirection] = useState<PriceDirection>(null);
   const [clock, setClock] = useState(Date.now());
+  const bookScrollRef = useRef<HTMLDivElement>(null);
+  const currentPriceRef = useRef<HTMLDivElement>(null);
+  const pendingScrollTopRef = useRef<number | null>(null);
+  const captureScrollBeforeBookUpdate = useCallback(() => {
+    const viewport = bookScrollRef.current;
+    pendingScrollTopRef.current = viewport ? viewport.scrollTop : null;
+  }, []);
   const { book, ticker, connection, lastUpdateAt, retryAttempt, reconnectNow } =
-    useMarketStream(feedEnabled);
+    useMarketStream(feedEnabled, captureScrollBeforeBookUpdate);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const updatePriceDirection = useCallback(() => {
+    const viewport = bookScrollRef.current;
+    const priceAnchor = currentPriceRef.current;
+    if (!viewport || !priceAnchor || ticker.lastPrice === null) {
+      setPriceDirection((previous) => (previous === null ? previous : null));
+      return;
+    }
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const priceRect = priceAnchor.getBoundingClientRect();
+    const nextDirection: PriceDirection =
+      priceRect.bottom < viewportRect.top
+        ? 'up'
+        : priceRect.top > viewportRect.bottom
+          ? 'down'
+          : null;
+    setPriceDirection((previous) =>
+      previous === nextDirection ? previous : nextDirection,
+    );
+  }, [ticker.lastPrice]);
+
+  const scrollToCurrentPrice = useCallback(() => {
+    const viewport = bookScrollRef.current;
+    const priceAnchor = currentPriceRef.current;
+    if (!viewport || !priceAnchor) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const priceRect = priceAnchor.getBoundingClientRect();
+    const targetTop =
+      viewport.scrollTop +
+      priceRect.top -
+      viewportRect.top +
+      priceRect.height / 2 -
+      viewport.clientHeight / 2;
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    viewport.scrollTop = Math.min(maxScrollTop, Math.max(0, targetTop));
+    pendingScrollTopRef.current = null;
+    updatePriceDirection();
+  }, [updatePriceDirection]);
+
+  const handleBookScroll = useCallback(
+    (_event: UIEvent<HTMLDivElement>) => updatePriceDirection(),
+    [updatePriceDirection],
+  );
+
+  useLayoutEffect(() => {
+    const viewport = bookScrollRef.current;
+    if (viewport) {
+      if (followPrice) {
+        scrollToCurrentPrice();
+      } else if (pendingScrollTopRef.current !== null) {
+        const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+        const preservedScrollTop = Math.min(
+          maxScrollTop,
+          Math.max(0, pendingScrollTopRef.current),
+        );
+        if (viewport.scrollTop !== preservedScrollTop) {
+          viewport.scrollTop = preservedScrollTop;
+        }
+      }
+    }
+    pendingScrollTopRef.current = null;
+    updatePriceDirection();
+  }, [
+    book.updatedAt,
+    followPrice,
+    scrollToCurrentPrice,
+    ticker.lastPrice,
+    updatePriceDirection,
+    visibleRowCount,
+  ]);
 
   const { bidTotal, askTotal, bidShare, askShare } = useMemo(() => {
     const bidTotal = book.bids.reduce((sum, level) => sum + level.size, 0);
@@ -266,20 +386,34 @@ function Home() {
                 <p>QNT / USDT &nbsp;·&nbsp; FULL TOP-20 SNAPSHOT</p>
               </div>
             </div>
-            <div className="depth-controls" aria-label="Visible order book depth">
-              <span className="control-label">Rows</span>
-              {[10, 20].map((count) => (
-                <button
-                  className={`row-toggle${visibleRowCount === count ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => setVisibleRowCount(count as 10 | 20)}
-                  aria-pressed={visibleRowCount === count}
-                  data-testid={`button-depth-${count}`}
-                  key={count}
-                >
-                  {count}
-                </button>
-              ))}
+            <div className="depth-heading-controls">
+              <div className="depth-controls" aria-label="Visible order book depth">
+                <span className="control-label">Rows</span>
+                {[10, 20].map((count) => (
+                  <button
+                    className={`row-toggle${visibleRowCount === count ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => setVisibleRowCount(count as 10 | 20)}
+                    aria-pressed={visibleRowCount === count}
+                    data-testid={`button-depth-${count}`}
+                    key={count}
+                  >
+                    {count}
+                  </button>
+                ))}
+              </div>
+              <button
+                className={`follow-toggle${followPrice ? ' active' : ''}`}
+                type="button"
+                aria-pressed={followPrice}
+                onClick={() => setFollowPrice((enabled) => !enabled)}
+                data-testid="button-follow-price"
+              >
+                <span>FOLLOW PRICE</span>
+                <span className="follow-switch" aria-hidden="true">
+                  <span />
+                </span>
+              </button>
             </div>
           </div>
 
@@ -307,36 +441,70 @@ function Home() {
             </div>
           </div>
 
-          <div className="book-grid">
-            <BookSide
-              side="ask"
-              levels={visibleAsks}
-              maxSize={maxSize}
-              threshold={askLargeThreshold}
-            />
-            <div className="mid-market" data-testid="spread-summary">
-              <div>
-                <div className="mid-label">Last traded price</div>
-                <div className="mid-price" data-testid="mid-market-price">
-                  {formatPrice(ticker.lastPrice)}
-                  <small>USDT</small>
-                </div>
+          <div className="book-scroll-frame">
+            {priceDirection && ticker.lastPrice !== null && (
+              <div
+                className={`price-direction-indicator ${priceDirection}`}
+                aria-label={`Current price ${priceDirection === 'up' ? 'above' : 'below'} the viewed order-book levels`}
+                data-testid="current-price-direction"
+              >
+                <span aria-hidden="true">{priceDirection === 'up' ? '↑' : '↓'}</span>
+                <span>{formatPrice(ticker.lastPrice)} USDT</span>
               </div>
-              <div className="spread-inline" data-testid="spread-detail">
-                {spread === null ? '—' : `${formatPrice(spread)} USDT`}
-                <small>
-                  {spreadPercent === null || spreadBps === null
-                    ? 'SPREAD / —'
-                    : `${spreadPercent.toFixed(3)}%  ·  ${spreadBps.toFixed(1)} BPS`}
-                </small>
+            )}
+            <div
+              className="book-scroll-viewport"
+              ref={bookScrollRef}
+              onScroll={handleBookScroll}
+              data-testid="book-scroll-viewport"
+              tabIndex={0}
+              aria-label="Scrollable live order book"
+            >
+              <div className="book-grid">
+                <BookSide
+                  side="ask"
+                  levels={visibleAsks}
+                  maxSize={maxSize}
+                  threshold={askLargeThreshold}
+                />
+                <div
+                  className="mid-market"
+                  ref={currentPriceRef}
+                  data-testid="spread-summary"
+                >
+                  <div>
+                    <div className="mid-label">Last traded price</div>
+                    <div className="mid-price" data-testid="mid-market-price">
+                      {formatPrice(ticker.lastPrice)}
+                      <small>USDT</small>
+                    </div>
+                  </div>
+                  <div className="spread-inline" data-testid="spread-detail">
+                    {spread === null ? '—' : `${formatPrice(spread)} USDT`}
+                    <small>
+                      {spreadPercent === null || spreadBps === null
+                        ? 'SPREAD / —'
+                        : `${spreadPercent.toFixed(3)}%  ·  ${spreadBps.toFixed(1)} BPS`}
+                    </small>
+                  </div>
+                </div>
+                <BookSide
+                  side="bid"
+                  levels={visibleBids}
+                  maxSize={maxSize}
+                  threshold={bidLargeThreshold}
+                />
               </div>
             </div>
-            <BookSide
-              side="bid"
-              levels={visibleBids}
-              maxSize={maxSize}
-              threshold={bidLargeThreshold}
-            />
+            <button
+              className="current-price-button"
+              type="button"
+              onClick={scrollToCurrentPrice}
+              data-testid="button-current-price"
+              aria-label="Scroll order book to current price"
+            >
+              CURRENT PRICE
+            </button>
           </div>
         </section>
 

@@ -1,0 +1,1 @@
+- [Standalone Vite builds](vite-build-env.md) — shell builds do not inherit the managed workflow’s required PORT and BASE_PATH.
