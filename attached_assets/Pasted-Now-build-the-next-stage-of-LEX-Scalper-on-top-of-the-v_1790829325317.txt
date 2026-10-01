@@ -1,0 +1,237 @@
+Now build the next stage of LEX Scalper on top of the verified working implementation.
+
+IMPORTANT: preserve all currently working functionality. Do not rewrite the working Gate.io feed, History Engine, OBI, Microprice, liquidity tracking, manual-scroll system, or existing calculations. Extend the current architecture.
+
+1. PROFESSIONAL FULL DEPTH DOM / PRICE LADDER
+
+Replace the current separated long ASK and BID presentation in the dedicated DOM view with a continuous professional price ladder optimized for iPhone.
+
+The visual concept should resemble a professional trading DOM: extremely easy to read, compact rows, price and liquidity visible immediately, but keep the existing LEX visual identity.
+
+Support:
+
+* 20 / 50 / 100 / 200 levels per side where the data source supports it.
+* Default = 100 levels per side.
+* Target Full Depth mode = up to 200 ASK + 200 BID.
+* If Gate.io provides fewer levels through the current feed, display only real received levels. Never fabricate depth.
+
+The ladder should conceptually look like:
+
+ASK 313.66 | size | cumulative | age/status
+ASK 313.65 | size | cumulative | age/status
+ASK 313.64 | 4.82 | cumulative | WALL 01:24
+ASK 313.63 | size | cumulative
+
+–––– LIVE PRICE 313.62 ––––
+
+BID 313.61 | size | cumulative
+BID 313.60 | size | cumulative
+BID 313.59 | 7.83 | cumulative | WALL 00:48
+BID 313.58 | size | cumulative
+
+The market boundary must move naturally as best bid/ask and trades change.
+
+2. MOVING LIVE PRICE
+
+Make the current market price visually obvious inside the ladder.
+
+Display:
+
+* Last traded price
+* Best Bid
+* Best Ask
+* Spread
+
+The LIVE PRICE marker must move with the actual market.
+
+Briefly flash/indicate upward price movement and downward price movement without creating distracting animation.
+
+Do not fake price movement.
+
+3. MANUAL SCROLL MUST REMAIN ABSOLUTE
+
+Preserve the verified manual-scroll behavior.
+
+When FOLLOW PRICE = OFF:
+
+* Incoming WebSocket updates must NEVER move the user’s viewport.
+* The user must be able to manually inspect distant liquidity while all rows continue updating live.
+* Do not recenter because price changes.
+
+When the current market moves outside the visible viewport, show a compact directional control such as:
+
+↑ CURRENT 315.42
+
+or
+
+↓ CURRENT 312.61
+
+Tapping it returns to the current market.
+
+FOLLOW PRICE remains OFF by default.
+
+When FOLLOW PRICE = ON, keep the live market area approximately centered.
+
+4. FULL SCREEN DOM
+
+Add an Expand button to open a dedicated full-screen DOM optimized for iPhone.
+
+Full Screen should use almost all available screen space for the ladder.
+
+Keep a compact header containing approximately:
+
+QNT/USDT ▼ | LIVE PRICE | LIVE | DEPTH 100/200 | Close
+
+Hide nonessential panels while Full Screen DOM is active.
+
+Full-screen mode must remain vertically scrollable by the user.
+
+5. VISUAL LIQUIDITY
+
+Make liquidity visually understandable without requiring the user to read every number.
+
+Each price row should have a proportional horizontal depth bar.
+
+BID liquidity and ASK liquidity must be visually distinguishable.
+
+Preserve numerical Size and Cumulative Size.
+
+Use the existing dynamic LARGE/WALL engine instead of fixed arbitrary thresholds.
+
+LARGE and WALL levels should stand out clearly but should not overwhelm the interface.
+
+Support compact notation where appropriate:
+12.4K
+850K
+4.2M
+
+6. LIQUIDITY LIFETIME / WALL PERSISTENCE
+
+Integrate the existing Liquidity Age tracking directly into important DOM rows.
+
+Example:
+
+313.08 | 4.2M | WALL | 01:34
+
+Do not reset the lifetime merely because the quantity changes slightly at the same persistent price level.
+
+Use the existing history engine to distinguish persistent liquidity from newly appearing liquidity.
+
+Display lifetime primarily for LARGE/WALL/important levels so ordinary rows remain clean.
+
+7. ORDER-FLOW EVENT LABELS
+
+Use the existing History Engine to display compact event labels when supported by actual data:
+
+ADD
+PULL
+REPL
+ABS
+SWEEP
+WALL
+SPOOF?
+
+These labels must come from the existing calculations and live observations. Never randomly generate them.
+
+Spoof Risk must remain explicitly heuristic and must never be presented as proof of spoofing.
+
+Avoid filling every row with labels. Prioritize meaningful events.
+
+8. MARKET SELECTOR
+
+Remove the hard-coded QNT-only user experience.
+
+Add a market selector by tapping:
+
+QNT/USDT ▼
+
+Open a fast mobile search interface where the user can type:
+
+SOL
+XRP
+PEPE
+RENDER
+QNT
+etc.
+
+Prioritize Binance-listed USDT spot markets as the market catalog and automatically refresh that catalog so newly listed supported markets can appear without hard-coding every coin.
+
+IMPORTANT:
+
+The current live order-book implementation is Gate.io.
+
+Do NOT pretend Gate.io liquidity is Binance liquidity.
+
+Build the market/data-source layer so the UI can support Binance or other exchanges later.
+
+If the selected Binance-listed pair is also available from the currently supported Gate.io public feed, it may use Gate.io data but MUST clearly show:
+
+SOURCE: GATE.IO
+
+Never merge two exchanges into one DOM unless a future explicit aggregated mode is implemented.
+
+If no supported live depth source exists for a selected pair, show DATA UNAVAILABLE instead of fabricated data.
+
+When changing markets, reset market-specific History Engine state so liquidity history from QNT can never contaminate SOL, XRP, PEPE, etc.
+
+Add:
+
+* Search
+* Favorites
+* Recently viewed
+* 24h change
+* 24h volume where available
+
+9. PREPARE APPLICATION NAVIGATION
+
+Create the navigation architecture:
+
+DOM | CHART | SCANNER
+
+DOM is the active fully implemented feature for this stage.
+
+CHART and SCANNER should only receive clean placeholder/shell views for now.
+
+Do NOT build the full Chart or Scanner yet.
+
+Selecting a market must be global application state, so later:
+
+SOL selected in Scanner → SOL DOM → SOL Chart
+
+all refer to the same market.
+
+Reserve the CHART architecture for later integration of LEX Indicator V2.1 and market structure/liquidity overlays.
+
+10. PERFORMANCE
+
+This is a live scalping interface, so performance is critical.
+
+Do not remount the entire ladder on every WebSocket update.
+
+Use stable price-level identity, efficient updates and virtualization if needed.
+
+100/200-level live depth must remain smooth on an iPhone.
+
+Manual scrolling must remain smooth while WebSocket updates continue.
+
+Do not allow incoming updates to fight against touch scrolling.
+
+11. VALIDATION
+
+After implementation:
+
+* Run TypeScript typecheck.
+* Run production build.
+* Test the mobile layout at approximately 402x874.
+* Verify real live market data.
+* Verify manual scrolling while live updates arrive.
+* Verify CURRENT PRICE navigation.
+* Verify FOLLOW PRICE ON/OFF.
+* Verify Full Screen DOM.
+* Verify market switching does not retain the previous market’s history.
+* Verify LARGE/WALL age continues increasing correctly.
+* Verify no simulated order-book data was introduced.
+
+Do not add trading, wallet, deposits, API keys or order execution.
+
+At the end, report exactly what was implemented, what was tested with real live data, the maximum real depth currently available from the data source, and any remaining data-source limitations.
