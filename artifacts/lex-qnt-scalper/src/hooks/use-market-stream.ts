@@ -8,6 +8,18 @@ export type BookState = {
   bestAsk: number | null;
   updatedAt: number | null;
 };
+export type BookUpdateSource = 'snapshot' | 'stream';
+export type MarketTrade = {
+  id: string;
+  side: 'buy' | 'sell';
+  price: number;
+  amount: number;
+};
+export type BookHistoryCallbacks = {
+  onBookUpdate: (book: BookState, source: BookUpdateSource, receivedAt: number) => void;
+  onTrade: (trade: MarketTrade, receivedAt: number) => void;
+  onReset: () => void;
+};
 export type TickerState = {
   lastPrice: number | null;
   priceChangePercent: number | null;
@@ -33,7 +45,7 @@ const EMPTY_TICKER: TickerState = {
 };
 const STREAM_URL = 'wss://api.gateio.ws/ws/v4/';
 const SNAPSHOT_URL =
-  'https://api.gateio.ws/api/v4/spot/order_book?currency_pair=QNT_USDT&limit=20&with_id=true';
+  'https://api.gateio.ws/api/v4/spot/order_book?currency_pair=QNT_USDT&limit=100&with_id=true';
 const TICKER_SNAPSHOT_URL =
   'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=QNT_USDT';
 
@@ -64,6 +76,7 @@ function levelsFrom(payload: unknown, descending: boolean): BookLevel[] {
 export function useMarketStream(
   enabled: boolean,
   beforeBookUpdate?: () => void,
+  historyCallbacks?: BookHistoryCallbacks,
 ) {
   const [book, setBook] = useState<BookState>(EMPTY_BOOK);
   const [ticker, setTicker] = useState<TickerState>(EMPTY_TICKER);
@@ -80,6 +93,7 @@ export function useMarketStream(
 
   useEffect(() => {
     if (!enabled) {
+      historyCallbacks?.onReset();
       setConnection('disconnected');
       retryCount.current = 0;
       setRetryAttempt(0);
@@ -92,6 +106,7 @@ export function useMarketStream(
     let streamBookReceived = false;
     let streamTickerReceived = false;
     const snapshotAbort = new AbortController();
+    historyCallbacks?.onReset();
 
     fetch(SNAPSHOT_URL, { signal: snapshotAbort.signal })
       .then((response) => {
@@ -103,15 +118,18 @@ export function useMarketStream(
         const bids = levelsFrom(snapshot.bids, true);
         const asks = levelsFrom(snapshot.asks, false);
         if (bids.length || asks.length) {
-          beforeBookUpdate?.();
-          setBook({
+          const updatedAt = Date.now();
+          const nextBook: BookState = {
             bids,
             asks,
             bestBid: bids[0]?.price ?? null,
             bestAsk: asks[0]?.price ?? null,
-            updatedAt: Date.now(),
-          });
-          setLastUpdateAt(Date.now());
+            updatedAt,
+          };
+          beforeBookUpdate?.();
+          historyCallbacks?.onBookUpdate(nextBook, 'snapshot', updatedAt);
+          setBook(nextBook);
+          setLastUpdateAt(updatedAt);
         }
       })
       .catch(() => {
@@ -196,14 +214,43 @@ export function useMarketStream(
             const asks = levelsFrom(envelope.result.asks, false);
             if (bids.length || asks.length) {
               streamBookReceived = true;
-              beforeBookUpdate?.();
-              setBook({
+              const nextBook: BookState = {
                 bids,
                 asks,
                 bestBid: bids.length ? bids[0].price : null,
                 bestAsk: asks.length ? asks[0].price : null,
                 updatedAt: receivedAt,
-              });
+              };
+              beforeBookUpdate?.();
+              historyCallbacks?.onBookUpdate(nextBook, 'stream', receivedAt);
+              setBook(nextBook);
+              consumed = true;
+            }
+          }
+
+          if (envelope.channel === 'spot.trades' && envelope.result) {
+            const tradeRows = Array.isArray(envelope.result)
+              ? envelope.result
+              : [envelope.result];
+            for (const row of tradeRows) {
+              if (
+                row.currency_pair !== 'QNT_USDT' ||
+                (row.side !== 'buy' && row.side !== 'sell')
+              ) {
+                continue;
+              }
+              const price = asNumber(row.price);
+              const amount = asNumber(row.amount);
+              if (price === null || amount === null || amount <= 0) continue;
+              historyCallbacks?.onTrade(
+                {
+                  id: String(row.id ?? `${row.create_time_ms ?? receivedAt}-${price}-${amount}`),
+                  side: row.side,
+                  price,
+                  amount,
+                },
+                receivedAt,
+              );
               consumed = true;
             }
           }
@@ -242,6 +289,7 @@ export function useMarketStream(
 
       currentSocket.onopen = () => {
         if (disposed || activeSocket !== currentSocket) return;
+        historyCallbacks?.onReset();
         armWatchdog();
         heartbeatTimer = window.setInterval(() => {
           if (currentSocket.readyState === WebSocket.OPEN) {
@@ -256,13 +304,21 @@ export function useMarketStream(
             time,
             channel: 'spot.order_book',
             event: 'subscribe',
-            payload: ['QNT_USDT', '20', '100ms'],
+            payload: ['QNT_USDT', '100', '100ms'],
           }),
         );
         currentSocket.send(
           JSON.stringify({
             time,
             channel: 'spot.tickers',
+            event: 'subscribe',
+            payload: ['QNT_USDT'],
+          }),
+        );
+        currentSocket.send(
+          JSON.stringify({
+            time,
+            channel: 'spot.trades',
             event: 'subscribe',
             payload: ['QNT_USDT'],
           }),
@@ -274,7 +330,10 @@ export function useMarketStream(
       currentSocket.onclose = () => {
         clearSocketTimers();
         if (activeSocket === currentSocket) activeSocket = null;
-        if (!disposed) scheduleReconnect();
+        if (!disposed) {
+          historyCallbacks?.onReset();
+          scheduleReconnect();
+        }
       };
     };
 
@@ -299,7 +358,7 @@ export function useMarketStream(
       activeSocket?.close();
       activeSocket = null;
     };
-  }, [beforeBookUpdate, enabled, connectionNonce]);
+  }, [beforeBookUpdate, connectionNonce, enabled, historyCallbacks]);
 
   return { book, ticker, connection, lastUpdateAt, retryAttempt, reconnectNow };
 }

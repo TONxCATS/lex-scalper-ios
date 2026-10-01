@@ -19,6 +19,8 @@ import {
   type ConnectionState,
   useMarketStream,
 } from '@/hooks/use-market-stream';
+import { useOrderBookHistory } from '@/hooks/use-order-book-history';
+import type { OrderBookHistoryMetrics } from '@/lib/order-book-history';
 
 function formatPrice(value: number | null) {
   if (value === null || !Number.isFinite(value)) return '—';
@@ -44,15 +46,12 @@ function formatVolume(value: number | null) {
   return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 
-function largeOrderThreshold(levels: BookLevel[]) {
-  const values = levels.map((level) => level.size).filter((size) => size > 0).sort((a, b) => a - b);
-  if (values.length < 4) return Number.POSITIVE_INFINITY;
-  const middle = Math.floor(values.length / 2);
-  const median =
-    values.length % 2 === 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
-  const upperQuartile = values[Math.floor((values.length - 1) * 0.75)];
-  const average = values.reduce((sum, size) => sum + size, 0) / values.length;
-  return Math.max(median * 2.7, upperQuartile * 1.75, average * 1.8);
+function formatAge(milliseconds: number | null) {
+  if (milliseconds === null) return '—';
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) return `${Math.max(0.1, seconds).toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.floor(seconds % 60)}s`;
 }
 
 function connectionCopy(state: ConnectionState) {
@@ -70,15 +69,24 @@ type PriceLevelRowProps = {
   index: number;
   maxSize: number;
   threshold: number;
+  wallThreshold: number;
 };
 
 const PriceLevelRow = memo(
-  function PriceLevelRow({ side, level, index, maxSize, threshold }: PriceLevelRowProps) {
+  function PriceLevelRow({
+    side,
+    level,
+    index,
+    maxSize,
+    threshold,
+    wallThreshold,
+  }: PriceLevelRowProps) {
     const isLarge = level.size >= threshold;
+    const isWall = level.size >= wallThreshold;
     const depthWidth = maxSize > 0 ? Math.max(3, (level.size / maxSize) * 100) : 0;
     return (
       <div
-        className={`level-row${isLarge ? ' large-order' : ''}`}
+        className={`level-row${isLarge ? ' large-order' : ''}${isWall ? ' wall-order' : ''}`}
         style={{ '--depth-width': `${depthWidth}%` } as CSSProperties}
         data-testid={`row-${side}-${index}`}
         data-price={level.price}
@@ -90,7 +98,11 @@ const PriceLevelRow = memo(
         </span>
         <span className="size" data-testid={`size-${side}-${index}`}>
           {formatSize(level.size)}
-          {isLarge && <span className="large-tag">LARGE</span>}
+          {isWall ? (
+            <span className="wall-tag">WALL</span>
+          ) : (
+            isLarge && <span className="large-tag">LARGE</span>
+          )}
         </span>
         <span className="cumulative" data-testid={`cumulative-${side}-${index}`}>
           {formatSize(level.cumulativeSize, 3)}
@@ -105,7 +117,8 @@ const PriceLevelRow = memo(
     previous.level.size === next.level.size &&
     previous.level.cumulativeSize === next.level.cumulativeSize &&
     previous.maxSize === next.maxSize &&
-    previous.threshold === next.threshold,
+    previous.threshold === next.threshold &&
+    previous.wallThreshold === next.wallThreshold,
 );
 
 function LevelRows({
@@ -113,11 +126,13 @@ function LevelRows({
   levels,
   maxSize,
   threshold,
+  wallThreshold,
 }: {
   side: 'bid' | 'ask';
   levels: BookLevel[];
   maxSize: number;
   threshold: number;
+  wallThreshold: number;
 }) {
   if (levels.length === 0) {
     return (
@@ -139,6 +154,7 @@ function LevelRows({
         index={index}
         maxSize={maxSize}
         threshold={threshold}
+        wallThreshold={wallThreshold}
       />
     ))
   );
@@ -149,11 +165,13 @@ function BookSide({
   levels,
   maxSize,
   threshold,
+  wallThreshold,
 }: {
   side: 'bid' | 'ask';
   levels: BookLevel[];
   maxSize: number;
   threshold: number;
+  wallThreshold: number;
 }) {
   const title = side === 'bid' ? 'BID SIDE' : 'ASK SIDE';
   return (
@@ -172,7 +190,167 @@ function BookSide({
         <span>Size</span>
         <span>Cumulative size</span>
       </div>
-      <LevelRows side={side} levels={levels} maxSize={maxSize} threshold={threshold} />
+      <LevelRows
+        side={side}
+        levels={levels}
+        maxSize={maxSize}
+        threshold={threshold}
+        wallThreshold={wallThreshold}
+      />
+    </section>
+  );
+}
+
+function HistoryMetric({
+  label,
+  value,
+  unit,
+  testId,
+  className = '',
+  title,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  testId: string;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <div className={`history-metric ${className}`} data-testid={testId} title={title}>
+      <span className="history-metric-label">{label}</span>
+      <strong>{value}</strong>
+      {unit && <small>{unit}</small>}
+    </div>
+  );
+}
+
+function OrderBookHistoryPanel({
+  metrics,
+  now,
+}: {
+  metrics: OrderBookHistoryMetrics;
+  now: number;
+}) {
+  const spoofLevel =
+    metrics.spoofRisk >= 65 ? 'high' : metrics.spoofRisk >= 35 ? 'medium' : 'low';
+  const buyPressure = metrics.buyPressure;
+  const pressureValue =
+    buyPressure === null
+      ? '—'
+      : `${Math.round(buyPressure)} / ${Math.round(100 - buyPressure)}`;
+  const sweepDetail = metrics.sweep
+    ? `${metrics.sweep.levels} LEVELS · ${formatAge(now - metrics.sweep.at)}`
+    : 'NO RECENT SWEEP';
+  const wallText = (side: 'BID' | 'ASK', wall: OrderBookHistoryMetrics['bidWall']) =>
+    wall
+      ? `${side} ${formatPrice(wall.price)} · ${formatSize(wall.size, 2)} QNT · ${formatAge(wall.persistenceMs)}`
+      : `${side} —`;
+
+  return (
+    <section className="history-panel" aria-label="Order book history analysis" data-testid="history-engine-panel">
+      <div className="history-panel-heading">
+        <span>Order book history</span>
+        <span className={`history-status${metrics.baselineReady ? ' ready' : ''}`}>
+          {metrics.baselineReady ? 'LIVE · 5S FLOW' : 'SAMPLING'}
+        </span>
+      </div>
+
+      <div className="history-obi-grid" aria-label="Order book imbalance by distance from mid-price">
+        {Object.entries(metrics.obi).map(([band, value]) => {
+          const key = band.replace('.', '-').replace('%', '');
+          const direction = value === null ? '' : value >= 0 ? 'positive' : 'negative';
+          return (
+            <div className="history-obi-cell" data-testid={`history-obi-${key}`} key={band}>
+              <span>OBI {band}</span>
+              <strong className={direction}>
+                {value === null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(0)}%`}
+              </strong>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="history-metric-grid">
+        <HistoryMetric
+          label="MICROPRICE"
+          value={formatPrice(metrics.microprice)}
+          unit="USDT"
+          testId="history-microprice"
+        />
+        <HistoryMetric
+          label="BUY / SELL"
+          value={pressureValue}
+          unit="%"
+          testId="history-buy-pressure"
+          className={buyPressure === null ? '' : buyPressure >= 50 ? 'positive' : 'negative'}
+        />
+        <HistoryMetric
+          label="ADDED"
+          value={formatSize(metrics.added, 2)}
+          unit="QNT"
+          testId="history-added"
+        />
+        <HistoryMetric
+          label="PULL"
+          value={formatSize(metrics.pulled, 2)}
+          unit="QNT"
+          testId="history-pull"
+        />
+        <HistoryMetric
+          label="REPLENISH"
+          value={formatSize(metrics.replenishment, 2)}
+          unit="QNT"
+          testId="history-replenishment"
+        />
+        <HistoryMetric
+          label="ABSORPTION"
+          value={formatSize(metrics.absorption, 2)}
+          unit="QNT"
+          testId="history-absorption"
+        />
+        <HistoryMetric
+          label="SPOOF RISK"
+          value={`${metrics.spoofRisk.toFixed(0)}%`}
+          unit={spoofLevel.toUpperCase()}
+          testId="history-spoof-risk"
+          className={`risk-${spoofLevel}`}
+          title="Heuristic based on short-lived dynamic walls removed without matching public trade volume; not proof of intent."
+        />
+        <HistoryMetric
+          label="SWEEP"
+          value={
+            metrics.sweep
+              ? `${metrics.sweep.side === 'buy' ? 'BUY' : 'SELL'} ${metrics.sweep.levels}L`
+              : '—'
+          }
+          unit={metrics.sweep ? formatSize(metrics.sweep.amount, 2) : 'QNT'}
+          testId="history-sweep"
+          className={metrics.sweep ? `sweep-${metrics.sweep.side}` : ''}
+          title={sweepDetail}
+        />
+      </div>
+
+      <div className="history-context-row">
+        <span className="history-context-label">WALLS · PERSISTENCE</span>
+        <span className="history-wall bid" data-testid="history-bid-wall">
+          {wallText('BID', metrics.bidWall)}
+        </span>
+        <span className="history-wall ask" data-testid="history-ask-wall">
+          {wallText('ASK', metrics.askWall)}
+        </span>
+      </div>
+      <div className="history-age-row" data-testid="history-oldest-level">
+        <span>OLDEST VISIBLE LEVEL</span>
+        <strong>
+          {metrics.oldestLevel
+            ? `${metrics.oldestLevel.side.toUpperCase()} ${formatPrice(metrics.oldestLevel.price)} · ${formatAge(metrics.oldestLevel.ageMs)}`
+            : '—'}
+        </strong>
+      </div>
+      <p className="history-method-note" title="Depth deltas are estimated from consecutive Gate.io top-100 snapshots and correlated with the public taker trade stream.">
+        TOP-100 SNAPSHOTS + PUBLIC TRADE TAPE · HEURISTIC SIGNALS
+      </p>
     </section>
   );
 }
@@ -186,12 +364,13 @@ function Home() {
   const bookScrollRef = useRef<HTMLDivElement>(null);
   const currentPriceRef = useRef<HTMLDivElement>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
+  const { metrics: historyMetrics, callbacks: historyCallbacks } = useOrderBookHistory();
   const captureScrollBeforeBookUpdate = useCallback(() => {
     const viewport = bookScrollRef.current;
     pendingScrollTopRef.current = viewport ? viewport.scrollTop : null;
   }, []);
   const { book, ticker, connection, lastUpdateAt, retryAttempt, reconnectNow } =
-    useMarketStream(feedEnabled, captureScrollBeforeBookUpdate);
+    useMarketStream(feedEnabled, captureScrollBeforeBookUpdate, historyCallbacks);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
@@ -271,8 +450,12 @@ function Home() {
   ]);
 
   const { bidTotal, askTotal, bidShare, askShare } = useMemo(() => {
-    const bidTotal = book.bids.reduce((sum, level) => sum + level.size, 0);
-    const askTotal = book.asks.reduce((sum, level) => sum + level.size, 0);
+    const bidTotal = book.bids
+      .slice(0, 20)
+      .reduce((sum, level) => sum + level.size, 0);
+    const askTotal = book.asks
+      .slice(0, 20)
+      .reduce((sum, level) => sum + level.size, 0);
     const combined = bidTotal + askTotal;
     const bidShare = combined > 0 ? (bidTotal / combined) * 100 : null;
     return {
@@ -290,9 +473,15 @@ function Home() {
   const spreadBps = spread !== null && midpoint ? (spread / midpoint) * 10_000 : null;
   const visibleBids = book.bids.slice(0, visibleRowCount);
   const visibleAsks = book.asks.slice(0, visibleRowCount);
-  const maxSize = Math.max(0, ...book.bids.map((level) => level.size), ...book.asks.map((level) => level.size));
-  const bidLargeThreshold = largeOrderThreshold(visibleBids);
-  const askLargeThreshold = largeOrderThreshold(visibleAsks);
+  const maxSize = Math.max(
+    0,
+    ...visibleBids.map((level) => level.size),
+    ...visibleAsks.map((level) => level.size),
+  );
+  const bidLargeThreshold = historyMetrics.largeThresholds.bid;
+  const askLargeThreshold = historyMetrics.largeThresholds.ask;
+  const bidWallThreshold = historyMetrics.wallThresholds.bid;
+  const askWallThreshold = historyMetrics.wallThresholds.ask;
   const ageSeconds = lastUpdateAt === null ? null : Math.max(0, Math.floor((clock - lastUpdateAt) / 1000));
   const freshness = ageSeconds === null ? 'WAITING FOR FIRST UPDATE' : `UPDATED ${ageSeconds}s AGO`;
   const freshnessClass = ageSeconds === null ? '' : ageSeconds <= 2 ? 'fresh' : ageSeconds <= 10 ? 'stale' : '';
@@ -383,7 +572,7 @@ function Home() {
               <span className="section-marker" />
               <div>
                 <h2>Market depth</h2>
-                <p>QNT / USDT &nbsp;·&nbsp; FULL TOP-20 SNAPSHOT</p>
+                <p>QNT / USDT &nbsp;·&nbsp; TOP-20 DISPLAY / 100-LEVEL HISTORY</p>
               </div>
             </div>
             <div className="depth-heading-controls">
@@ -441,6 +630,8 @@ function Home() {
             </div>
           </div>
 
+          <OrderBookHistoryPanel metrics={historyMetrics} now={clock} />
+
           <div className="book-scroll-frame">
             {priceDirection && ticker.lastPrice !== null && (
               <div
@@ -466,6 +657,7 @@ function Home() {
                   levels={visibleAsks}
                   maxSize={maxSize}
                   threshold={askLargeThreshold}
+                  wallThreshold={askWallThreshold}
                 />
                 <div
                   className="mid-market"
@@ -493,6 +685,7 @@ function Home() {
                   levels={visibleBids}
                   maxSize={maxSize}
                   threshold={bidLargeThreshold}
+                  wallThreshold={bidWallThreshold}
                 />
               </div>
             </div>
