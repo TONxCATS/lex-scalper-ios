@@ -1,0 +1,81 @@
+Continue from the latest checkpoint. Do NOT restart or redesign the LEX Scalper project.
+
+The previous run stopped because the monthly quota was reached while investigating Gate.io 200-level live depth.
+
+You already established that Gate.io REST can return 200 real bid levels and 200 real ask levels, while the older snapshot WebSocket did not provide continuous updates for the requested 200-level book.
+
+FIRST TASK: finish the 200-level live order-book data architecture before continuing the UI work.
+
+Investigate and use Gate.io’s current supported incremental order-book/depth WebSocket mechanism if available.
+
+The desired architecture is:
+
+REST snapshot (up to 200 BID + 200 ASK) → incremental WebSocket depth updates → locally maintained synchronized order book → existing History Engine → DOM UI
+
+Requirements:
+
+* Use only real Gate.io market data.
+* Never fabricate or pad missing levels.
+* Never present a REST-only snapshot as continuously LIVE.
+* Maintain the local order book by price level.
+* Correctly process new levels, quantity changes and removal when quantity becomes zero.
+* Preserve correct BID and ASK sorting.
+* Detect sequence gaps/out-of-sync conditions if the Gate.io protocol exposes update IDs/sequences.
+* If synchronization is lost, automatically obtain a fresh snapshot and resynchronize.
+* Keep the existing History Engine connected to the synchronized book.
+* Preserve OBI, Microprice, ADD/PULL, Replenishment, Absorption, Sweep, WALL/Persistence, Spoof Risk and Liquidity Age.
+* Preserve manual scrolling, CURRENT PRICE and FOLLOW PRICE behavior.
+* Do not implement simulated depth.
+
+Measure and report the maximum actually verified continuously-live depth available after synchronization.
+
+If 200 BID + 200 ASK can be maintained correctly in real time, enable it.
+
+If only 100 + 100 can be reliably maintained live, keep 100 + 100 and clearly report that limitation rather than pretending 200 levels are live.
+
+After the 200-level live data layer is verified, continue the previously requested Stage 2 work from the existing brief:
+
+* Professional continuous price ladder
+* 20 / 50 / 100 / 200 depth selector where supported
+* Full Screen DOM
+* Moving LIVE PRICE
+* Visual liquidity bars
+* LARGE/WALL highlighting
+* Liquidity lifetime displayed on important levels
+* ADD / PULL / REPL / ABS / SWEEP / WALL / SPOOF? labels
+* Absolute manual scrolling with FOLLOW PRICE OFF
+* CURRENT PRICE return control
+* Market search/selector
+* Binance-listed USDT markets as the catalog, while always clearly identifying the actual exchange supplying order-book data
+* Favorites and Recently Viewed
+* DOM / CHART / SCANNER navigation, with CHART and SCANNER remaining placeholders for now
+
+When switching markets, completely reset market-specific order-book and History Engine state so data from one market can never contaminate another.
+
+Do not implement trading, wallets, deposits or order execution.
+
+Finally test:
+
+* real live depth synchronization
+* resynchronization after connection loss
+* 200-level performance if supported
+* manual scrolling during incoming updates
+* FOLLOW PRICE
+* CURRENT PRICE
+* Full Screen DOM
+* market switching
+* History Engine isolation between markets
+* TypeScript typecheck
+* production build
+* iPhone layout around 402×874
+
+At the end, report separately:
+
+1. Maximum verified LIVE depth
+2. What uses WebSocket
+3. What uses REST
+4. What Stage 2 features were completed
+5. What remains unfinished
+6. Any Gate.io limitations discovered
+
+Preserve all currently working functionality and extend the existing implementation rather than replacing it.
