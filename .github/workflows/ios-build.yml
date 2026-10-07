@@ -23,7 +23,9 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: |
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          pnpm add -Dw @rollup/rollup-darwin-arm64 --no-frozen-lockfile
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
