@@ -23,9 +23,7 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: |
-          pnpm install --no-frozen-lockfile --ignore-scripts
-          pnpm rebuild esbuild
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
@@ -46,8 +44,8 @@ jobs:
           xcodebuild \
             -project artifacts/lex-qnt-scalper/ios/App/App.xcodeproj \
             -scheme App \
-            -sdk iphonesimulator \
             -configuration Debug \
+            -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
