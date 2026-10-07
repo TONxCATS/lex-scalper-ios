@@ -26,13 +26,13 @@ jobs:
         run: |
           pnpm config set --location=project --json allowBuilds '{"esbuild":true}'
 
-      - name: Install dependencies
-        run: |
-          pnpm install --no-frozen-lockfile
-
-      - name: Install Rollup macOS ARM binary
-        run: |
-          pnpm --filter @workspace/lex-qnt-scalper add -D @rollup/rollup-darwin-arm64
+      - name: Build web app
+        working-directory: artifacts/lex-qnt-scalper
+        env:
+          PORT: 5173
+          BASE_PATH: /
+          NODE_ENV: production
+        run: pnpm build
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
