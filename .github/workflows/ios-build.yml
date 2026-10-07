@@ -22,24 +22,45 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
+      - name: Allow esbuild scripts
+        run: |
+          pnpm config set --location=project --json allowBuilds '{"esbuild":true}'
+
       - name: Install dependencies
         run: |
-          pnpm install --no-frozen-lockfile --ignore-scripts
-          pnpm add -Dw @rollup/rollup-darwin-arm64
+          pnpm install --no-frozen-lockfile
+
+      - name: Install Rollup macOS ARM binary
+        run: |
+          pnpm --filter @workspace/lex-qnt-scalper add -D @rollup/rollup-darwin-arm64
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
+        env:
+          PORT: 5173
+          BASE_PATH: /
+          NODE_ENV: production
         run: pnpm build
+
+      - name: Check web build
+        run: |
+          echo "Checking dist/public..."
+          test -d artifacts/lex-qnt-scalper/dist/public
+          ls -la artifacts/lex-qnt-scalper/dist/public
 
       - name: Sync Capacitor iOS
         working-directory: artifacts/lex-qnt-scalper
+        env:
+          PORT: 5173
+          BASE_PATH: /
+          NODE_ENV: production
         run: pnpm exec cap sync ios
 
       - name: Verify Xcode project
         run: |
-          echo "Checking iOS project..."
-          ls -la artifacts/lex-qnt-scalper/ios/App
+          echo "Checking Xcode project..."
           test -d artifacts/lex-qnt-scalper/ios/App/App.xcodeproj
+          ls -la artifacts/lex-qnt-scalper/ios/App
 
       - name: Build iOS project
         run: |
