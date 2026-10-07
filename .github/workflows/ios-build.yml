@@ -22,7 +22,9 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+  run: |
+    pnpm config set dangerouslyAllowAllBuilds true
+    pnpm install --no-frozen-lockfile
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
