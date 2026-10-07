@@ -8,58 +8,78 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
+
+    env:
+      CI: "true"
+      PORT: "5173"
+      BASE_PATH: "/"
+      NODE_ENV: "production"
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Enable pnpm
+      - name: Enable Corepack
         run: corepack enable
 
-      - name: Configure pnpm
+      - name: Prepare pnpm configuration
         run: |
+          pnpm config set --location=project verifyDepsBeforeRun false
           pnpm config set --location=project --json allowBuilds '{"esbuild":true}'
 
-      - name: Install dependencies
+      - name: Clean old dependencies
         run: |
           rm -rf node_modules
           rm -rf artifacts/lex-qnt-scalper/node_modules
-          pnpm install --no-frozen-lockfile --force
+
+      - name: Install workspace dependencies
+        run: |
+          pnpm install --no-frozen-lockfile
+
+      - name: Show platform
+        run: |
+          uname -a
+          node -p "process.platform + ' ' + process.arch"
+          pnpm --version
+
+      - name: Verify Vite exists
+        working-directory: artifacts/lex-qnt-scalper
+        run: |
+          test -x ../../node_modules/.bin/vite || test -x node_modules/.bin/vite || pnpm exec vite --version
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
-        env:
-          PORT: 5173
-          BASE_PATH: /
-          NODE_ENV: production
-          CI: "false"
-        run: pnpm run build
-
-      - name: Check web build
         run: |
-          test -d artifacts/lex-qnt-scalper/dist/public
+          ./../../node_modules/.bin/vite build --config vite.config.ts || pnpm exec --config.verifyDepsBeforeRun=false vite build --config vite.config.ts
+
+      - name: Verify web output
+        run: |
+          test -f artifacts/lex-qnt-scalper/dist/public/index.html
+          echo "Web build OK"
           ls -la artifacts/lex-qnt-scalper/dist/public
 
       - name: Sync Capacitor iOS
         working-directory: artifacts/lex-qnt-scalper
-        env:
-          PORT: 5173
-          BASE_PATH: /
-          NODE_ENV: production
-        run: pnpm exec cap sync ios
+        run: |
+          pnpm exec --config.verifyDepsBeforeRun=false cap sync ios
 
       - name: Verify Xcode project
         run: |
           test -d artifacts/lex-qnt-scalper/ios/App/App.xcodeproj
+          echo "Xcode project found"
           ls -la artifacts/lex-qnt-scalper/ios/App
 
-      - name: Build iOS project
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build iOS Simulator app
         run: |
           xcodebuild \
             -project artifacts/lex-qnt-scalper/ios/App/App.xcodeproj \
@@ -68,4 +88,4 @@ jobs:
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            clean build
