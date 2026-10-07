@@ -2,7 +2,8 @@ name: iOS Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -22,9 +23,9 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-  run: |
-    pnpm config set dangerouslyAllowAllBuilds true
-    pnpm install --no-frozen-lockfile
+        run: |
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          pnpm rebuild esbuild
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
@@ -34,6 +35,12 @@ jobs:
         working-directory: artifacts/lex-qnt-scalper
         run: pnpm exec cap sync ios
 
+      - name: Verify Xcode project
+        run: |
+          echo "Checking iOS project..."
+          ls -la artifacts/lex-qnt-scalper/ios/App
+          test -d artifacts/lex-qnt-scalper/ios/App/App.xcodeproj
+
       - name: Build iOS project
         run: |
           xcodebuild \
@@ -41,5 +48,6 @@ jobs:
             -scheme App \
             -sdk iphonesimulator \
             -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
