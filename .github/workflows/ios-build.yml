@@ -13,6 +13,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build web app
+        working-directory: artifacts/lex-qnt-scalper
+        run: pnpm build
+
+      - name: Sync Capacitor iOS
+        working-directory: artifacts/lex-qnt-scalper
+        run: pnpm exec cap sync ios
+
       - name: Build iOS project
         run: |
           xcodebuild \
