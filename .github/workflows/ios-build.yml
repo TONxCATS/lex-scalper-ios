@@ -22,17 +22,15 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
-      - name: Allow esbuild scripts
+      - name: Configure pnpm
         run: |
           pnpm config set --location=project --json allowBuilds '{"esbuild":true}'
 
-      - name: Build web app
-        working-directory: artifacts/lex-qnt-scalper
-        env:
-          PORT: 5173
-          BASE_PATH: /
-          NODE_ENV: production
-        run: pnpm build
+      - name: Install dependencies
+        run: |
+          rm -rf node_modules
+          rm -rf artifacts/lex-qnt-scalper/node_modules
+          pnpm install --no-frozen-lockfile --force
 
       - name: Build web app
         working-directory: artifacts/lex-qnt-scalper
@@ -40,11 +38,11 @@ jobs:
           PORT: 5173
           BASE_PATH: /
           NODE_ENV: production
-        run: pnpm build
+          CI: "false"
+        run: pnpm run build
 
       - name: Check web build
         run: |
-          echo "Checking dist/public..."
           test -d artifacts/lex-qnt-scalper/dist/public
           ls -la artifacts/lex-qnt-scalper/dist/public
 
@@ -58,7 +56,6 @@ jobs:
 
       - name: Verify Xcode project
         run: |
-          echo "Checking Xcode project..."
           test -d artifacts/lex-qnt-scalper/ios/App/App.xcodeproj
           ls -la artifacts/lex-qnt-scalper/ios/App
 
