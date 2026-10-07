@@ -16,7 +16,7 @@ jobs:
       - name: Build iOS project
         run: |
           xcodebuild \
-            -project ios/App/App.xcodeproj \
+            -project artifacts/lex-qnt-scalper/ios/App/App.xcodeproj \
             -scheme App \
             -sdk iphonesimulator \
             -configuration Debug \
